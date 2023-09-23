@@ -35,7 +35,7 @@
   (let* ((reflections (make-array (list (1+ width) (1+ height))
                                   :initial-element nil))
          (div 8)
-         (delta (/ (/ *height* div))))
+         (delta (/ div height)))
     (lparallel:pmapcar (lambda (coord)
                          (let* ((i (first coord))
                                 (j (second coord)))
