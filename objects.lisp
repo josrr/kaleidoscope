@@ -22,7 +22,8 @@
   (draw-design stream object :line-thickness 4 :ink +flipping-ink+))
 
 (defmethod draw ((object eye) stream)
-  (draw-design stream object :line-thickness 10 :ink +cyan+))
+  (draw-design stream object :line-thickness 20 :ink +flipping-ink+)
+  (draw-design stream object :line-thickness 4 :ink +black+ :filled nil))
 
 (defclass ray (standard-line)
   ((vec-start :initarg :vec-start :initform nil :reader ray-vec-start)
@@ -36,14 +37,17 @@
                  :vec-end (vec (point-x point) (point-y point))))
 
 (defmethod draw ((object ray) stream)
-  (draw-design stream object :line-thickness 2 :ink +red+)
+  ;;(draw-design stream object :line-thickness 2 :ink +red+)
+  (draw-line* stream
+              (vx (ray-vec-start object)) (vy (ray-vec-start object))
+              (vx (ray-vec-end object)) (vy (ray-vec-end object))
+              :line-thickness 2 :ink +red+)
   (draw-point* stream
-               (point-x (line-end-point object)) (point-y (line-end-point object))
+               (vx (ray-vec-end object)) (vy (ray-vec-end object))
                :line-thickness 10 :ink +red+))
 
 (defclass reflection ()
   ((point :initarg :point :initform nil :reader reflection-point)
-   (intersection :initarg :intersection :initform nil :reader reflection-intersection)
    (times :initarg :times :initform nil :reader reflection-times)))
 
 (defun make-reflection (ray mirrors times)
@@ -59,10 +63,11 @@
           (make-instance 'reflection
                          :point (make-point (- (vx2 vp))
                                             (- (vy2 vp)))
-                         :intersection in
+                         ;;:intersection in
                          :times times))
         nil)))
 
+#|
 (defmethod draw ((object reflection) stream)
   (draw-line* stream
               (point-x (reflection-intersection object)) (point-y (reflection-intersection object))
@@ -72,3 +77,5 @@
   (draw-design stream (reflection-point object)
                :line-thickness 10
                :ink +blue+))
+(intersection :initarg :intersection :initform nil :reader reflection-intersection)
+|#
