@@ -12,18 +12,35 @@
                  :normal (vunit (vec (- (point-y p1) (point-y p2))
                                      (- (point-x p2) (point-x p1))))))
 
+(defmethod draw ((object mirror) stream)
+  (draw-design stream object :line-thickness 4 :ink +flipping-ink+))
+
+(defclass mirrors (standard-polygon)
+  ())
+
+(defun make-mirrors (mirrors-list)
+  (make-instance 'mirrors
+                 :points (append (loop for m in mirrors-list
+                                       collect (line-start-point m))
+                                 (list (line-end-point (first (last mirrors-list)))))))
+
+(defmethod draw ((object mirrors) stream)
+  (draw-design stream object :line-thickness 3
+                             :filled nil
+                             :ink +flipping-ink+))
+
 (defclass eye (standard-point)
   ((vector :initarg :vector :initform nil :reader eye-vector)))
 
 (defun make-eye (x y)
   (make-instance 'eye :x x :y y :vector (vec x y)))
 
-(defmethod draw ((object mirror) stream)
-  (draw-design stream object :line-thickness 4 :ink +flipping-ink+))
-
 (defmethod draw ((object eye) stream)
-  (draw-design stream object :line-thickness 20 :ink +flipping-ink+)
-  (draw-design stream object :line-thickness 4 :ink +black+ :filled nil))
+  (draw-circle* stream (point-x object) (point-y object) 10
+                :line-thickness 0 :ink +white+ :filled t)
+  (draw-circle* stream (point-x object) (point-y object) 10
+                :line-thickness 3 :ink +flipping-ink+ :filled nil)
+  (draw-design stream object :line-thickness 5 :ink +black+))
 
 (defclass ray (standard-line)
   ((vec-start :initarg :vec-start :initform nil :reader ray-vec-start)
@@ -63,7 +80,6 @@
           (make-instance 'reflection
                          :point (make-point (- (vx2 vp))
                                             (- (vy2 vp)))
-                         ;;:intersection in
                          :times times))
         nil)))
 

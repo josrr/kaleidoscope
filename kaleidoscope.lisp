@@ -5,14 +5,9 @@
 (defparameter *threads* 16)
 (defparameter *width* 1024)
 (defparameter *height* 1024)
-(defparameter *style* (make-text-style :serif :roman 24))
+(defparameter *style* (make-text-style :serif :roman 18))
 
 (setf lparallel:*kernel* (lparallel:make-kernel *threads*))
-
-(defun mirrors-polygon (mirrors)
-  (make-polygon (append (loop for m in mirrors
-                              collect (line-start-point m))
-                        (list (line-end-point (first (last mirrors)))))))
 
 (defun calculate-all-reflections (point eye mirrors polygon)
   (loop for times = 1 then (1+ times)
@@ -28,7 +23,7 @@
           then (make-ray eye (reflection-point reflection))
         for reflection = (make-reflection ray mirrors times)
         for in = (and reflection (region-contains-region-p polygon (reflection-point reflection)))
-        while (and reflection (not in) (< times 1000))
+        while (and reflection (not in) (< times 10000))
         finally (return reflection)))
 
 (defun calculate-reflections (frame reflections width height eye mirrors polygon)
@@ -54,10 +49,6 @@
                                               (kaleidoscope-mirrors-polygon frame))
         do (draw (getf ref :ray) canvas)
            (draw (getf ref :ref) canvas)))
-
-(defun draw-mirrors (frame canvas)
-  (loop for mirror in (kaleidoscope-mirrors frame)
-        do (draw mirror canvas)))
 
 (defun draw-origin (width height)
   (clime:with-output-to-drawing-stream
@@ -108,12 +99,23 @@
       (with-drawing-options (canvas :recording-p nil)
         (draw-pattern* canvas origin x0 y0)
         (draw-pattern* canvas output 0 0)
-        (draw-mirrors frame canvas)
-        (draw (kaleidoscope-eye frame) canvas)))))
+        (present (kaleidoscope-mirrors-polygon frame) 'mirrors :stream canvas)))))
+
+(defclass graphical-view (view) ())
+(defparameter +graphical-view+ (make-instance 'graphical-view))
+
+(define-presentation-method present (eye (type eye) stream (view graphical-view)
+                                         &key &allow-other-keys)
+  (draw eye stream))
+
+(define-presentation-method present (mirrors (type mirrors) stream (view graphical-view)
+                                             &key &allow-other-keys)
+  (draw mirrors stream))
 
 (defun display-canvas (frame pane)
   (window-clear pane)
-  (draw-all frame pane))
+  (draw-all frame pane)
+  (present (kaleidoscope-eye frame) 'eye :stream pane))
 
 (defun display-progress (frame pane)
   (window-clear pane)
@@ -154,8 +156,9 @@
   (:panes (canvas (make-pane 'application-pane
                              :name 'canvas
                              :background +white+
-                             :display-function #'display-canvas
-                             :display-time :command-loop))
+                             :display-function 'display-canvas
+                             :default-view +graphical-view+
+                             :display-time t))
           (interactor :interactor))
   (:layouts (default
              (vertically (:min-height (* 5/4 *height*)
@@ -167,7 +170,8 @@
   (:menu-bar t))
 
 (define-kaleidoscope-command (com-redraw :name "Redraw" :menu t) ()
-  t)
+  (redisplay-frame-pane *application-frame* (find-pane-named *application-frame* 'canvas)
+                        :force-p t))
 
 (defun draw-mirror (pane x0 y0)
   (let (mirrors record records)
@@ -183,9 +187,9 @@
             (when record
               (repaint-sheet pane (with-bounding-rectangle* (x1 y1 x2 y2) record
                                     (make-rectangle* (1- x1) (1- y1) (1+ x2) (1+ y2)))))
-            (make-output-record x y)
-            (loop for r in records do (replay r pane)
-                  finally (replay record pane)))
+                           (make-output-record x y)
+                           (loop for r in records do (replay r pane)
+                                 finally (replay record pane)))
           (:pointer-button-release (&key event x y)
             (if (and (= x0 x) (= y0 y))
                 (return-from processor (values x y))
@@ -202,46 +206,91 @@
         (push (make-mirror (line-end-point (first mirrors))
                            (line-start-point (second mirrors)))
               mirrors)
-        (let ((frame *application-frame*)
-              (progress-frame (find-application-frame 'reflections-progress)))
-          (setf (kaleidoscope-mirrors frame) (reverse mirrors)
-                (kaleidoscope-mirrors-polygon frame) (mirrors-polygon (kaleidoscope-mirrors frame))
-                (kaleidoscope-reflections frame) (calculate-reflections progress-frame
-                                                                        (kaleidoscope-reflections frame)
-                                                                        *width* *height*
-                                                                        (kaleidoscope-eye frame)
-                                                                        (kaleidoscope-mirrors frame)
-                                                                        (kaleidoscope-mirrors-polygon frame))))
-        (format *debug-io* "~{~S~%~}" mirrors)))))
+        (let* ((frame *application-frame*)
+               (mirrors (reverse mirrors))
+               (mirrors-polygon (make-mirrors mirrors)))
+          (when (region-contains-position-p mirrors-polygon
+                                            (point-x (kaleidoscope-eye frame))
+                                            (point-y (kaleidoscope-eye frame)))
+            (setf (kaleidoscope-mirrors frame) mirrors
+                  (kaleidoscope-mirrors-polygon frame) mirrors-polygon
+                  (kaleidoscope-reflections frame)
+                  (calculate-reflections (find-application-frame 'reflections-progress)
+                                         (kaleidoscope-reflections frame)
+                                         *width* *height*
+                                         (kaleidoscope-eye frame)
+                                         (kaleidoscope-mirrors frame)
+                                         (kaleidoscope-mirrors-polygon frame)))
+            (redisplay-frame-pane frame pane :force-p t)))))))
 
-(define-presentation-to-command-translator add-mirror
+(define-presentation-to-command-translator change-mirror
     (blank-area com-draw-mirror kaleidoscope
-                :gesture :select
-                :echo nil
-                :tester ((object)
-                         (declare (ignore object))
-                         (let ((frame *application-frame*))
-                           (eq (pointer-sheet (port-pointer (port frame)))
-                               (get-frame-pane frame 'canvas)))))
+     :gesture :select
+     :echo nil
+     :tester ((object)
+              (declare (ignore object))
+              (let ((frame *application-frame*))
+                (eq (pointer-sheet (port-pointer (port frame)))
+                    (get-frame-pane frame 'canvas)))))
     (object x y)
   (list x y))
+
+(define-presentation-to-command-translator move-eye
+    (eye com-move-eye kaleidoscope
+     :gesture :select
+     :echo t)
+    (object)
+  (list object))
+
+(define-drag-and-drop-translator tr-move-eye
+    (eye command mirrors kaleidoscope
+         :feedback (lambda (frame presentation stream x0 y0 x1 y1 state)
+                     (declare (ignore frame))
+                     (case state
+                       (:highlight
+                        (when (> (sqrt (+ (expt (- x1 x0) 2) (expt (- y1 y0) 2))) 4)
+                          (let ((eye (presentation-object presentation)))
+                            (with-output-recording-options (stream :draw t :record nil)
+                              (with-drawing-options
+                                  (stream :transformation
+                                          (make-translation-transformation (- x1 (point-x eye))
+                                                                           (- y1 (point-y eye))))
+                                (draw eye stream))))))
+                       (:unhighlight
+                        (repaint-sheet stream (make-rectangle*
+                                               (- x1 32)
+                                               (- y1 32)
+                                               (+ x1 32)
+                                               (+ y1 32))))))
+         :destination-tester
+         ((object destination-object)
+          (let ((pos (get-pointer-position (find-pane-named *application-frame* 'canvas))))
+            (region-contains-position-p destination-object (point-x pos) (point-y pos))))
+         :multiple-window nil
+         :menu nil)
+    (object)
+  (let ((position (get-pointer-position (find-pane-named *application-frame* 'canvas))))
+    `(com-move-eye ,position)))
 
 (define-kaleidoscope-command (com-draw-mirror :name "Draw mirror") ((x 'real) (y 'real))
   (draw-mirror (find-pane-named *application-frame* 'canvas) x y))
 
+(define-kaleidoscope-command (com-move-eye :name "Move eye") ((position))
+  (let ((frame *application-frame*)
+        (progress-frame (find-application-frame 'reflections-progress)))
+    (setf (kaleidoscope-eye frame) (make-eye (point-x position) (point-y position))
+          (kaleidoscope-reflections frame) (calculate-reflections progress-frame
+                                                                  (kaleidoscope-reflections frame)
+                                                                  *width* *height*
+                                                                  (kaleidoscope-eye frame)
+                                                                  (kaleidoscope-mirrors frame)
+                                                                  (kaleidoscope-mirrors-polygon frame)))
+    (redisplay-frame-pane *application-frame* (find-pane-named *application-frame* 'canvas)
+                          :force-p t)))
+
 (defun get-pointer-position (pane)
   (multiple-value-bind (x y) (stream-pointer-position pane)
     (make-point x y)))
-
-(define-presentation-translator translator-select-point
-    (blank-area point kaleidoscope :documentation "Select point"
-                                   :tester ((object)
-                                            (let ((frame *application-frame*))
-                                              (eq (pointer-sheet (port-pointer (port frame)))
-                                                  (get-frame-pane frame 'canvas)))))
-    (object)
-  (let ((canvas (get-frame-pane *application-frame* 'canvas)))
-    (get-pointer-position canvas)))
 
 (defun start ()
   (let* ((mirrors (list (make-mirror (make-point 464 560) (make-point 560 560))
@@ -249,7 +298,7 @@
                         (make-mirror (make-point 560 560) (make-point 464 464))))
          (point (make-point 560 575))
          (eye (make-eye 500 524))
-         (polygon (mirrors-polygon mirrors))
+         (polygon (make-mirrors mirrors))
          (reflections (make-array (list (1+ *width*) (1+ *height*))
                                   :initial-element nil))
          (reflections-progress (find-application-frame 'reflections-progress)))
